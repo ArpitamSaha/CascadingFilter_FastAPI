@@ -1,6 +1,11 @@
+from io import StringIO
+from operator import and_
+from typing import Optional
+from venv import logger
 import pandas as pd
 import os
 from database import SessionLocal
+from sqlalchemy.orm import Session
 from models import SalesData
 class actions:
     def __init__(self):
@@ -19,7 +24,7 @@ class actions:
             
         return {"message": f"File chunked into {no_of_chunks} parts."}
         
-    def merging(self, root_folder):
+    async def merging(self, root_folder):
         try:
             csv_list = []
             if not os.path.exists(root_folder):
@@ -52,20 +57,18 @@ class actions:
 
                     if db.query(SalesData).filter(SalesData.Order_ID == order_id).first():
                         print(f"Order ID {order_id} already exists. Skipping.")
-                        # skipped_count += 1
                         continue
 
                     sales_data = SalesData(
                         Order_ID=order_id,
                         Product=str(row['Product']),
                         Categories=str(row.get('catégorie') or row.get('Categories') or "Unknown"),
-                        Purchase_Address=str(row['Purchase Address']),
+                        Purchase_Purchase_Address=str(row['Purchase Purchase_Address']),
                         Quantity_Ordered=int(row['Quantity Ordered']),
                         Price_Each=float(row['Price Each']),
-                        Turnover=float(row['turnover'])
+                        Turnover=float(row['Turnover'])
                     )
                     db.add(sales_data)
-                    # inserted_count += 1
 
                 db.commit()
                 print("Merged data inserted into the database.")
@@ -89,24 +92,93 @@ class actions:
 
     def filter(
         self,
-        db: SessionLocal,
+        db: Session,
         min_price: float,
         max_price: float,
-        category: str = None,
-        product: str = None,
-        address: str = None,
-        quantity: int = None,
-        turnover: float = None
+        Categories: Optional[str] = None,
+        Product: Optional[str] = None,
+        Purchase_Address: Optional[str] = None,
+        Quantity: Optional[int] = None,
+        Turnover: Optional[float] = None,
     ):
-        query = db.query(SalesData).filter(SalesData.Price_Each >= min_price, SalesData.Price_Each <= max_price)
-        if category:
-            query = query.filter(SalesData.Categories == category)
-        if product:
-            query = query.filter(SalesData.Product == product)
-        if address:
-            query = query.filter(SalesData.Purchase_Address == address)
-        if quantity:
-            query = query.filter(SalesData.Quantity_Ordered == quantity)
-        if turnover:
-            query = query.filter(SalesData.Turnover == turnover)
-        return query.all()
+        try:
+            logger.info("Filtering sales data")
+            filters = [
+                SalesData.Price_Each >= min_price,
+                SalesData.Price_Each <= max_price
+            ]
+            filter_map = {
+                "Categories": (Categories, SalesData.Categories),
+                "Product": (Product, SalesData.Product),
+                "Purchase_Address": (Purchase_Address, SalesData.Purchase_Address),
+                "Quantity": (Quantity, SalesData.Quantity_Ordered),
+                "Turnover": (Turnover, SalesData.Turnover),
+            }
+            for values, column in filter_map.values():
+                if values:
+                    filters.append(column.in_(values))
+    
+            result = db.query(SalesData).filter(and_(*filters)).all()
+            logger.info("Filtered query returned %d records.", len(result))
+            return result
+        except Exception as e:
+            logger.error("Error filtering sales data: %s", str(e), exc_info=True)
+            return {"error": "An error occurred while filtering: " + str(e)}
+        
+
+    # def convert_to_csv(
+    #         self, filter_data
+    # ) -> StringIO:
+    #     try:
+    #         logger.info("Converting filtered data to CSV")
+    #         df = pd.DataFrame([order.__dict__ for order in filter_data])
+    #         df.drop(columns=['_sa_instance_state'], inplace=True, errors='ignore')
+    #         csv_stream = StringIO()
+    #         df.to_csv(csv_stream, index=False)
+    #         csv_stream.seek(0)
+    #         logger.info("CSV conversion successful")
+    #         return csv_stream
+    #     except Exception as e:
+    #         logger.error(f"Error converting to CSV: {e}")
+    #         return StringIO(f"Error converting to CSV: {e}")
+    # Function to convert filtered data to CSV
+    def convert_to_csv(
+            self, filter_data
+    ) -> StringIO:
+        try:
+            logger.info("Converting filtered data to CSV")
+            
+            # Check if filter_data is an error dictionary
+            if isinstance(filter_data, dict) and "error" in filter_data:
+                error_stream = StringIO()
+                pd.DataFrame([{"error": filter_data["error"]}]).to_csv(error_stream, index=False)
+                error_stream.seek(0)
+                return error_stream
+                
+            # Check if filter_data is a valid list of model objects
+            if not isinstance(filter_data, list):
+                raise ValueError("Invalid data format received")
+                
+            records = [{
+                'Order_ID': getattr(order, 'Order_ID', None),
+                'Product': getattr(order, 'Product', None),
+                'Categories': getattr(order, 'Categories', None),
+                'Purchase_Address': getattr(order, 'Purchase_Address', None),
+                'Quantity_Ordered': getattr(order, 'Quantity_Ordered', None),
+                'Price_Each': getattr(order, 'Price_Each', None),
+                'Turnover': getattr(order, 'Turnover', None)
+            } for order in filter_data]
+            
+            df = pd.DataFrame(records)
+            csv_stream = StringIO()
+            df.to_csv(csv_stream, index=False)
+            csv_stream.seek(0)
+            logger.info("CSV conversion successful")
+            return csv_stream
+            
+        except Exception as e:
+            logger.error(f"Error converting to CSV: {e}")
+            error_stream = StringIO()
+            pd.DataFrame([{"error": f"Error converting to CSV: {str(e)}"}]).to_csv(error_stream, index=False)
+            error_stream.seek(0)
+            return error_stream
