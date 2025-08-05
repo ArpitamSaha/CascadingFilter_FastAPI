@@ -1,11 +1,12 @@
 from io import StringIO
 from operator import and_
-from typing import Optional
+from typing import List, Optional
 from venv import logger
 import pandas as pd
 import os
 from database import SessionLocal
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 from models import SalesData
 class actions:
     def __init__(self):
@@ -63,7 +64,7 @@ class actions:
                         Order_ID=order_id,
                         Product=str(row['Product']),
                         Categories=str(row.get('catégorie') or row.get('Categories') or "Unknown"),
-                        Purchase_Purchase_Address=str(row['Purchase Purchase_Address']),
+                        Purchase_Address=str(row['Purchase_Address']),
                         Quantity_Ordered=int(row['Quantity Ordered']),
                         Price_Each=float(row['Price Each']),
                         Turnover=float(row['Turnover'])
@@ -90,90 +91,95 @@ class actions:
         # Alternative way suggest by Satvik
         # data_frame.to_sql('sales_data', con=connection, if_exists='replace', index=False)
 
-    def filter(
+    # async def filter(
+    #     self,
+    #     db: Session,
+    #     min_price: float,
+    #     max_price: float,
+    #     Categories: Optional[List[str]] = None,
+    #     Product: Optional[List[str]] = None,
+    #     Purchase_Address: Optional[List[str]] = None,
+    #     Quantity_Ordered: Optional[List[int]] = None,
+    #     Price_Each: Optional[List[float]] = None,
+    #     Turnover: Optional[List[float]] = None,
+    # ):
+    #     try:
+    #         logger.info("Filtering sales data")
+    #         filters = [
+    #             SalesData.Price_Each >= min_price,
+    #             SalesData.Price_Each <= max_price
+    #         ]
+    #         filter_map = {
+    #             "Categories": (Categories, SalesData.Categories),
+    #             "Product": (Product, SalesData.Product),
+    #             "Purchase_Address": (Purchase_Address, SalesData.Purchase_Address),
+    #             "Quantity_Ordered": (Quantity_Ordered, SalesData.Quantity_Ordered),
+    #             "Price_Each": (Price_Each, SalesData.Price_Each),
+    #             "Turnover": (Turnover, SalesData.Turnover),
+    #         }
+    #         for values, column in filter_map.values():
+    #             if values:
+    #                 filters.append(column.in_(values))
+    
+    #         result = db.query(SalesData).filter(and_(*filters)).all()
+    #         logger.info("Filtered query returned %d records.", len(result))
+    #         return result
+    #     except Exception as e:
+    #         logger.error("Error filtering sales data: %s", str(e), exc_info=True)
+    #         return {"error": "An error occurred while filtering: " + str(e)}
+
+    async def filtering(
         self,
         db: Session,
         min_price: float,
         max_price: float,
-        Categories: Optional[str] = None,
-        Product: Optional[str] = None,
-        Purchase_Address: Optional[str] = None,
-        Quantity: Optional[int] = None,
-        Turnover: Optional[float] = None,
+        Categories: Optional[List[str]] = None,
+        Product: Optional[List[str]] = None,
+        Purchase_Address: Optional[List[str]] = None,
+        Quantity_Ordered: Optional[List[int]] = None,
+        Price_Each: Optional[List[float]] = None,
+        Turnover: Optional[List[float]] = None,
     ):
         try:
             logger.info("Filtering sales data")
+
             filters = [
                 SalesData.Price_Each >= min_price,
                 SalesData.Price_Each <= max_price
             ]
+
             filter_map = {
                 "Categories": (Categories, SalesData.Categories),
                 "Product": (Product, SalesData.Product),
                 "Purchase_Address": (Purchase_Address, SalesData.Purchase_Address),
-                "Quantity": (Quantity, SalesData.Quantity_Ordered),
+                "Quantity_Ordered": (Quantity_Ordered, SalesData.Quantity_Ordered),
+                "Price_Each": (Price_Each, SalesData.Price_Each),
                 "Turnover": (Turnover, SalesData.Turnover),
             }
+
             for values, column in filter_map.values():
                 if values:
                     filters.append(column.in_(values))
-    
             result = db.query(SalesData).filter(and_(*filters)).all()
+
             logger.info("Filtered query returned %d records.", len(result))
             return result
+
         except Exception as e:
             logger.error("Error filtering sales data: %s", str(e), exc_info=True)
-            return {"error": "An error occurred while filtering: " + str(e)}
-        
+            return {"error": f"An error occurred while filtering: {str(e)}"}
 
-    # def convert_to_csv(
-    #         self, filter_data
-    # ) -> StringIO:
-    #     try:
-    #         logger.info("Converting filtered data to CSV")
-    #         df = pd.DataFrame([order.__dict__ for order in filter_data])
-    #         df.drop(columns=['_sa_instance_state'], inplace=True, errors='ignore')
-    #         csv_stream = StringIO()
-    #         df.to_csv(csv_stream, index=False)
-    #         csv_stream.seek(0)
-    #         logger.info("CSV conversion successful")
-    #         return csv_stream
-    #     except Exception as e:
-    #         logger.error(f"Error converting to CSV: {e}")
-    #         return StringIO(f"Error converting to CSV: {e}")
-    # Function to convert filtered data to CSV
-    def convert_to_csv(
+    async def convert_to_csv(
             self, filter_data
     ) -> StringIO:
         try:
-            logger.info("Converting filtered data to CSV")
-            
-            # Check if filter_data is an error dictionary
-            if isinstance(filter_data, dict) and "error" in filter_data:
-                error_stream = StringIO()
-                pd.DataFrame([{"error": filter_data["error"]}]).to_csv(error_stream, index=False)
-                error_stream.seek(0)
-                return error_stream
-                
-            # Check if filter_data is a valid list of model objects
-            if not isinstance(filter_data, list):
-                raise ValueError("Invalid data format received")
-                
-            records = [{
-                'Order_ID': getattr(order, 'Order_ID', None),
-                'Product': getattr(order, 'Product', None),
-                'Categories': getattr(order, 'Categories', None),
-                'Purchase_Address': getattr(order, 'Purchase_Address', None),
-                'Quantity_Ordered': getattr(order, 'Quantity_Ordered', None),
-                'Price_Each': getattr(order, 'Price_Each', None),
-                'Turnover': getattr(order, 'Turnover', None)
-            } for order in filter_data]
-            
-            df = pd.DataFrame(records)
+            logger.info("Converting %d sales orders to CSV stream...", len(filter_data))
+            df = pd.DataFrame([order.__dict__ for order in filter_data])
+            df.drop(columns=["_sa_instance_state"], errors="ignore", inplace=True)
             csv_stream = StringIO()
             df.to_csv(csv_stream, index=False)
             csv_stream.seek(0)
-            logger.info("CSV conversion successful")
+            logger.info("CSV conversion complete.")
             return csv_stream
             
         except Exception as e:
